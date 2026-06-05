@@ -241,9 +241,19 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from ripser import ripser
-from persim import plot_diagrams
-from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
+
+# Estilo de gráficos
+plt.rcParams.update({
+    'figure.dpi': 110,
+    'axes.spines.top': False,
+    'axes.spines.right': False,
+    'axes.grid': True,
+    'grid.alpha': 0.25,
+    'font.size': 11,
+})
 
 ROOT = Path.cwd().parent if Path.cwd().name == 'notebooks' else Path.cwd()
 TDA_DIR = ROOT / 'data' / 'processed' / 'tda_results'
@@ -251,29 +261,31 @@ TDA_DIR.mkdir(parents=True, exist_ok=True)
 
 df = pd.read_parquet(ROOT / 'data' / 'processed' / 'escuelas_cdmx.parquet')
 print(len(df), 'escuelas; niveles:', df['nivel'].unique())
-"""),
-    code("""def landmark_sample(X: np.ndarray, max_n: int = 1500, seed: int = 0) -> np.ndarray:
-    '''Si X es muy grande, submuestrear con KMeans (preserva geometría).'''
-    if len(X) <= max_n:
-        return X
-    km = KMeans(n_clusters=max_n, n_init=3, random_state=seed).fit(X)
-    return km.cluster_centers_
 
-THRESH = 3000.0  # metros — radio de caminata interpretable
-MAX_N = 1500     # punto de corte para subsampling
+# Paleta consistente con el dashboard
+NIVEL_COLOR = {
+    'preescolar':     '#2ca02c',
+    'primaria':       '#1f77b4',
+    'secundaria':     '#ff7f0e',
+    'media_superior': '#d62728',
+    'media_tecnica':  '#9467bd',
+    'todas':          '#444444',
+}
+"""),
+    code("""THRESH = 3000.0  # metros — radio de caminata interpretable
+# Sin submuestreo: el complejo Vietoris-Rips se construye sobre TODAS las escuelas.
 """),
     code("""def compute_tda(X_metros: np.ndarray, thresh: float = THRESH):
-    Xs = landmark_sample(X_metros, MAX_N)
-    res = ripser(Xs, maxdim=1, thresh=thresh, do_cocycles=True)
+    res = ripser(X_metros, maxdim=1, thresh=thresh, do_cocycles=True)
     return {
-        'X': Xs,
+        'X': X_metros,
         'X_original_n': len(X_metros),
         'dgms': res['dgms'],
         'cocycles': res['cocycles'],
         'thresh': thresh,
     }
 
-# Calcular por nivel
+# Calcular por nivel (sobre todas las escuelas del nivel, sin submuestrear)
 results = {}
 for nivel, g in df.groupby('nivel'):
     X = g[['x_utm','y_utm']].values
@@ -291,57 +303,271 @@ for name, r in results.items():
         pickle.dump(r, f)
 print('guardados:', sorted(TDA_DIR.glob('*.pkl')))
 """),
-    code("""# Diagramas de persistencia por nivel
-fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-for ax, (name, r) in zip(axes.flat, results.items()):
-    plot_diagrams(r['dgms'], show=False, ax=ax)
-    ax.set_title(f'{name}  (n={r[\"X_original_n\"]})')
+    md("""## 1. Distribución espacial de las escuelas
+
+Antes de mirar los diagramas, vale la pena ver dónde están los puntos. Los
+huecos H₁ que aparezcan más adelante deben corresponder visualmente a
+regiones rodeadas por puntos pero vacías por dentro.
+"""),
+    code("""# Scatter espacial por nivel — coordenadas UTM en km para legibilidad
+ORDEN = ['preescolar','primaria','secundaria','media_superior','media_tecnica','todas']
+fig, axes = plt.subplots(2, 3, figsize=(15, 9), sharex=True, sharey=True)
+for ax, name in zip(axes.flat, ORDEN):
+    if name == 'todas':
+        sub = df
+    else:
+        sub = df[df['nivel'] == name]
+    color = NIVEL_COLOR[name]
+    ax.scatter(sub['x_utm']/1000, sub['y_utm']/1000,
+               s=4, c=color, alpha=0.45, edgecolors='none')
+    ax.set_title(f'{name}  ·  n={len(sub):,}', fontsize=11)
+    ax.set_aspect('equal')
+    ax.set_xlabel('x UTM (km)')
+    ax.set_ylabel('y UTM (km)')
+fig.suptitle('Escuelas de CDMX por nivel educativo', y=1.01, fontsize=13)
 plt.tight_layout()
 plt.show()
 """),
-    code("""# Top features H1 (huecos persistentes) por nivel
-def top_h1(r, k=5):
+    md("""## 2. Diagramas de persistencia
+
+Cada punto del diagrama es una **feature topológica**. El eje X es la escala
+ε en que la feature *nace*, el eje Y la escala en que *muere*. Las features
+lejos de la diagonal son las que persisten más — son las relevantes.
+"""),
+    code("""# Diagramas de persistencia mejorados — H0 y H1 superpuestos por nivel
+def plot_pd(ax, dgms, thresh, title, color_h1='#d62728'):
+    # diagonal
+    ax.plot([0, thresh], [0, thresh], '--', color='gray', lw=1, alpha=0.6)
+    ax.fill_between([0, thresh], [0, thresh], thresh,
+                    color='gray', alpha=0.04)
+    # H0
+    h0 = dgms[0].copy()
+    h0[~np.isfinite(h0[:,1]), 1] = thresh
+    ax.scatter(h0[:,0], h0[:,1], s=18, c='#1f77b4',
+               alpha=0.55, edgecolors='none', label=f'H₀ (n={len(dgms[0])})')
+    # H1
+    h1 = dgms[1].copy()
+    inf_mask = ~np.isfinite(h1[:,1])
+    h1[inf_mask, 1] = thresh
+    # Tamaño proporcional a persistencia (más persistente => más grande)
+    pers1 = h1[:,1] - h1[:,0]
+    sizes = 25 + 120 * (pers1 / max(pers1.max(), 1))
+    ax.scatter(h1[~inf_mask,0], h1[~inf_mask,1],
+               s=sizes[~inf_mask], c=color_h1, alpha=0.75,
+               edgecolors='black', linewidths=0.4,
+               label=f'H₁ (n={len(dgms[1])})')
+    # H1 con muerte infinita: marcamos como triángulo en el techo
+    if inf_mask.any():
+        ax.scatter(h1[inf_mask,0], h1[inf_mask,1],
+                   s=sizes[inf_mask], c=color_h1, marker='^',
+                   edgecolors='black', linewidths=0.4, alpha=0.9,
+                   label='H₁ (muerte = ∞)')
+    ax.set_title(title)
+    ax.set_xlabel('birth ε (m)')
+    ax.set_ylabel('death ε (m)')
+    ax.set_xlim(-50, thresh*1.02)
+    ax.set_ylim(-50, thresh*1.06)
+    ax.legend(loc='lower right', fontsize=8, framealpha=0.9)
+
+fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+for ax, name in zip(axes.flat, ORDEN):
+    r = results[name]
+    plot_pd(ax, r['dgms'], r['thresh'],
+            f"{name}  (n={r['X_original_n']:,})",
+            color_h1=NIVEL_COLOR[name])
+fig.suptitle('Diagramas de persistencia — tamaño ∝ persistencia',
+             y=1.01, fontsize=13)
+plt.tight_layout()
+plt.show()
+"""),
+    md("""## 3. Barcode H₁ — vida de los huecos
+
+Cada barra horizontal es un hueco. Va desde su `birth` hasta su `death`.
+Barras largas = huecos persistentes (estructura topológica robusta);
+barras cortas = ruido.
+"""),
+    code("""# Barcode H1 por nivel (top-15 más persistentes)
+def plot_barcode(ax, dgm1, thresh, title, color):
+    if len(dgm1) == 0:
+        ax.text(0.5, 0.5, '(sin H₁)', ha='center', va='center',
+                transform=ax.transAxes, color='gray')
+        ax.set_title(title); ax.set_yticks([]); return
+    h1 = dgm1.copy()
+    inf_mask = ~np.isfinite(h1[:,1])
+    h1[inf_mask, 1] = thresh
+    pers = h1[:,1] - h1[:,0]
+    order = np.argsort(-pers)[:15]
+    h1 = h1[order]; inf_mask = inf_mask[order]
+    y = np.arange(len(h1))
+    for i, ((b, d), is_inf) in enumerate(zip(h1, inf_mask)):
+        ax.hlines(y[i], b, d, colors=color, lw=3,
+                  alpha=0.85 if not is_inf else 0.55)
+        if is_inf:
+            ax.plot(d, y[i], marker='>', color=color, markersize=7)
+    ax.set_yticks([])
+    ax.set_xlabel('ε (m)')
+    ax.set_xlim(0, thresh*1.02)
+    ax.set_title(title)
+    ax.invert_yaxis()
+
+fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+for ax, name in zip(axes.flat, ORDEN):
+    r = results[name]
+    plot_barcode(ax, r['dgms'][1], r['thresh'],
+                 f'{name}  ·  top-15 H₁', NIVEL_COLOR[name])
+fig.suptitle('Barcode de huecos H₁ (las barras más largas = huecos más persistentes)',
+             y=1.01, fontsize=13)
+plt.tight_layout()
+plt.show()
+"""),
+    md("""## 4. Persistencia vs nacimiento (lifetime plot)
+
+Otra manera útil de mirar lo mismo: en el eje Y graficamos la **persistencia**
+(`death − birth`). Los puntos altos son los huecos más significativos. Una
+banda horizontal de “ruido” aparece pegada a y ≈ 0.
+"""),
+    code("""# Lifetime plot — un panel por nivel
+fig, axes = plt.subplots(2, 3, figsize=(16, 9), sharey=True)
+for ax, name in zip(axes.flat, ORDEN):
+    r = results[name]; thresh = r['thresh']
     h1 = r['dgms'][1]
     if len(h1) == 0:
-        return np.empty((0, 3))
-    pers = h1[:, 1] - h1[:, 0]
-    idx = np.argsort(-pers)[:k]
-    return np.column_stack([h1[idx], pers[idx]])
-
-for name in ['preescolar','primaria','secundaria','media_superior','media_tecnica','todas']:
-    if name not in results: continue
-    arr = top_h1(results[name], 5)
-    print(f'\\n{name}: top-5 H1 (birth, death, persistencia en metros)')
-    if len(arr):
-        for b, d, p in arr:
-            print(f'  ε∈[{b:7.1f}, {d:7.1f}]  persistencia={p:7.1f} m')
-    else:
-        print('  (sin features H1)')
+        ax.text(0.5, 0.5, '(sin H₁)', ha='center', va='center',
+                transform=ax.transAxes, color='gray')
+        ax.set_title(name); continue
+    deaths = np.where(np.isfinite(h1[:,1]), h1[:,1], thresh)
+    pers = deaths - h1[:,0]
+    # umbral de ruido: 25% del máximo (heurística visual)
+    cutoff = 0.25 * pers.max()
+    ax.scatter(h1[:,0], pers, s=18, c=NIVEL_COLOR[name],
+               alpha=0.7, edgecolors='none')
+    ax.axhline(cutoff, ls='--', color='gray', lw=0.8)
+    ax.text(thresh*0.98, cutoff, '  ruido →', ha='right', va='bottom',
+            fontsize=8, color='gray')
+    ax.set_xlabel('birth ε (m)')
+    ax.set_title(f'{name}  ·  máx persistencia = {pers.max():.0f} m')
+axes[0,0].set_ylabel('persistencia (m)')
+axes[1,0].set_ylabel('persistencia (m)')
+fig.suptitle('Lifetime plot — persistencia vs nacimiento',
+             y=1.01, fontsize=13)
+plt.tight_layout()
+plt.show()
 """),
-    code("""# Curvas de Betti β0(ε) y β1(ε) para 'primaria'
-def betti_curves(dgms, eps_range):
-    betti = []
-    for eps in eps_range:
-        b0 = np.sum((dgms[0][:,0] <= eps) & (dgms[0][:,1] > eps))
-        b1 = np.sum((dgms[1][:,0] <= eps) & (dgms[1][:,1] > eps))
-        betti.append((b0, b1))
-    return np.array(betti)
+    md("""## 5. Top features H₁ — los huecos más significativos
 
-eps = np.linspace(0, THRESH, 200)
-bc = betti_curves(results['primaria']['dgms'], eps)
-fig, ax = plt.subplots(1, 2, figsize=(12, 4))
-ax[0].plot(eps, bc[:,0]); ax[0].set_title('β0(ε) — componentes'); ax[0].set_xlabel('ε (m)')
-ax[1].plot(eps, bc[:,1], color='orange'); ax[1].set_title('β1(ε) — huecos'); ax[1].set_xlabel('ε (m)')
-plt.tight_layout(); plt.show()
+Tabla con los 5 huecos más persistentes por nivel. La columna `persistencia`
+es lo que mide qué tan robusto es el hueco a perturbaciones del umbral ε.
+"""),
+    code("""def top_h1_df(r, k=5):
+    h1 = r['dgms'][1]
+    if len(h1) == 0:
+        return pd.DataFrame()
+    deaths = np.where(np.isfinite(h1[:,1]), h1[:,1], r['thresh'])
+    pers = deaths - h1[:,0]
+    order = np.argsort(-pers)[:k]
+    return pd.DataFrame({
+        'birth_m': np.round(h1[order, 0], 1),
+        'death_m': np.round(deaths[order], 1),
+        'persistencia_m': np.round(pers[order], 1),
+        'muerte_inf': ~np.isfinite(h1[order, 1]),
+    })
+
+tablas = []
+for name in ORDEN:
+    t = top_h1_df(results[name], k=5)
+    if t.empty: continue
+    t.insert(0, 'nivel', name)
+    tablas.append(t)
+top_h1_all = pd.concat(tablas, ignore_index=True)
+top_h1_all
+"""),
+    code("""# Gráfico de barras: máxima persistencia H1 por nivel
+maxpers = []
+for name in ORDEN:
+    h1 = results[name]['dgms'][1]
+    thresh = results[name]['thresh']
+    if len(h1) == 0:
+        maxpers.append(0); continue
+    deaths = np.where(np.isfinite(h1[:,1]), h1[:,1], thresh)
+    maxpers.append((deaths - h1[:,0]).max())
+
+fig, ax = plt.subplots(figsize=(9, 4.5))
+bars = ax.bar(ORDEN, maxpers, color=[NIVEL_COLOR[n] for n in ORDEN],
+              edgecolor='black', linewidth=0.4)
+for bar, v in zip(bars, maxpers):
+    ax.text(bar.get_x()+bar.get_width()/2, v+30,
+            f'{v:.0f} m', ha='center', fontsize=9)
+ax.set_ylabel('Persistencia máxima H₁ (m)')
+ax.set_title('Tamaño del hueco más grande por nivel — proxy del déficit de cobertura')
+ax.tick_params(axis='x', rotation=20)
+plt.tight_layout()
+plt.show()
+"""),
+    md("""## 6. Curvas de Betti β₀(ε) y β₁(ε)
+
+- **β₀(ε)** = número de componentes conexas vivas a escala ε. Empieza igual
+  al número de escuelas y baja a 1 cuando todo se conecta.
+- **β₁(ε)** = número de huecos vivos. Sube, llega a un pico, y baja cuando
+  los huecos se cubren.
+
+El pico de β₁ indica a qué escala la red de cobertura tiene **más huecos
+simultáneos** — un umbral natural de análisis.
+"""),
+    code("""def betti_curves(dgms, eps_range, thresh):
+    betti = np.zeros((len(eps_range), 2), dtype=int)
+    for i, eps in enumerate(eps_range):
+        for dim in (0, 1):
+            d = dgms[dim]
+            if len(d) == 0: continue
+            deaths = np.where(np.isfinite(d[:,1]), d[:,1], thresh + 1)
+            alive = (d[:,0] <= eps) & (deaths > eps)
+            betti[i, dim] = int(alive.sum())
+    return betti
+
+eps = np.linspace(0, THRESH, 300)
+
+# Comparativa de β1 entre todos los niveles
+fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+
+# Panel izquierdo: β0 normalizado (log scale)
+for name in ORDEN:
+    r = results[name]
+    bc = betti_curves(r['dgms'], eps, r['thresh'])
+    axes[0].plot(eps, bc[:, 0], color=NIVEL_COLOR[name], lw=1.8,
+                 label=f'{name}')
+axes[0].set_yscale('log')
+axes[0].set_xlabel('ε (m)')
+axes[0].set_ylabel('β₀(ε)  (escala log)')
+axes[0].set_title('β₀ — componentes conexas')
+axes[0].legend(fontsize=9, loc='upper right')
+
+# Panel derecho: β1
+for name in ORDEN:
+    r = results[name]
+    bc = betti_curves(r['dgms'], eps, r['thresh'])
+    peak = eps[bc[:, 1].argmax()]
+    peak_val = bc[:, 1].max()
+    axes[1].plot(eps, bc[:, 1], color=NIVEL_COLOR[name], lw=2,
+                 label=f'{name} (pico {peak_val} @ {peak:.0f} m)')
+axes[1].set_xlabel('ε (m)')
+axes[1].set_ylabel('β₁(ε)')
+axes[1].set_title('β₁ — huecos simultáneos')
+axes[1].legend(fontsize=8, loc='upper right')
+
+plt.tight_layout()
+plt.show()
 """),
     md("""## Interpretación
 
-- **β0(ε)** decrece hasta llegar a 1 cuando el grafo se vuelve conexo: la
-  ε en que esto ocurre estima cuánto hay que caminar entre escuelas vecinas.
-- **β1(ε)** alcanza un pico y luego decae: ese pico nos dice **cuántos huecos
-  simultáneos** persisten en la red de cobertura escolar.
-- Las features H1 con mayor persistencia son las zonas más significativas
-  sin escuelas — se exploran geográficamente en el notebook 04.
+- **Diagramas y barcode** muestran que la mayoría de niveles tienen varios
+  huecos con persistencia > 1 km — son zonas urbanas rodeadas pero sin
+  escuela cercana de ese tipo.
+- **β₀(ε)** decrece hasta 1 cuando el grafo se vuelve conexo: esa ε estima
+  cuánto hay que caminar entre escuelas vecinas del mismo nivel.
+- **β₁(ε)** alcanza un pico y luego decae: ese pico dice cuántos huecos
+  simultáneos persisten en la red.
+- El nivel con mayor persistencia H₁ máxima es el más vulnerable a
+  reubicación de matrícula — se explora geográficamente en el notebook 04.
 """),
 ]
 write_notebook("03_tda_persistencia.ipynb", NB03)

@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import pandas as pd; df = pd.read_parquet\\('data/processed/escuelas_cdmx.parquet'\\); print\\(df['sector'].value_counts\\(\\)\\); print\\('---'\\); print\\(df.columns.tolist\\(\\)\\)\")",
+      "Bash(python -c \"import pandas as pd; df = pd.read_parquet\\('data/processed/escuelas_cdmx.parquet'\\); vals = df['sector'].unique\\(\\); [print\\(repr\\(v\\)\\) for v in vals]\")",
+      "Bash(python notebooks/_build_notebooks.py)"
     ]
   }
 }

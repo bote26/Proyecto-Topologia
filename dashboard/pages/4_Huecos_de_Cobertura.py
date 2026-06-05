@@ -9,9 +9,9 @@ import pandas as pd
 import streamlit as st
 from streamlit_folium import st_folium
 
-from utils.data_loader import NIVEL_COLOR, load_escuelas, load_tda
+from utils.data_loader import NIVEL_COLOR, SECTORES, load_escuelas, load_tda
 from utils.plotting import add_holes_layer, base_map, utm_to_latlon
-from utils.tda import top_h1_with_cocycles
+from utils.tda import compute_for_points, top_h1_with_cocycles
 
 st.set_page_config(page_title="Huecos de Cobertura", page_icon="🗺️", layout="wide")
 st.title("🗺️ Huecos de cobertura escolar")
@@ -31,6 +31,17 @@ with st.sidebar:
                            "media_superior", "media_tecnica", "todas"]
     seleccion = st.multiselect("Niveles a mostrar", niveles_disponibles,
                                default=["primaria", "secundaria"])
+    sector_sel = st.radio(
+        "Sector",
+        ["ambos", *SECTORES],
+        index=0,
+        horizontal=True,
+        help="«ambos» usa los resultados pre-computados (más rápido). "
+             "Filtrar por sector recalcula la persistencia sobre el subconjunto.",
+    )
+    if sector_sel != "ambos":
+        thresh_recalc = st.slider("Umbral ε para recálculo (m)", 500, 5000, 3000, 100)
+        st.caption("Cálculo sin submuestreo: se usan todas las escuelas del subconjunto.")
     top_k = st.slider("Top-K huecos por nivel", 1, 10, 5)
     show_schools = st.checkbox("Mostrar escuelas como puntos", False)
 
@@ -38,16 +49,34 @@ m = base_map()
 
 rows = []
 for niv in seleccion:
-    r = load_tda(niv)
+    if sector_sel == "ambos":
+        r = load_tda(niv)
+    else:
+        sub = df if niv == "todas" else df[df["nivel"] == niv]
+        sub = sub[sub["sector"] == sector_sel]
+        if len(sub) < 3:
+            st.warning(f"Pocas escuelas para `{niv}` / `{sector_sel}` "
+                       f"({len(sub)}); se omite.")
+            continue
+        pts = sub[["x_utm", "y_utm"]].values
+        with st.spinner(f"Calculando huecos para {niv} ({sector_sel}) "
+                        f"con {len(pts):,} escuelas..."):
+            r = compute_for_points(
+                pts,
+                thresh=thresh_recalc,
+                max_n=len(pts),
+            )
     if r is None:
         continue
     holes = top_h1_with_cocycles(r, k=top_k)
     color = NIVEL_COLOR.get(niv, "black")
-    add_holes_layer(m, holes, color=color, label=f"huecos — {niv}")
+    label_suffix = niv if sector_sel == "ambos" else f"{niv} · {sector_sel}"
+    add_holes_layer(m, holes, color=color, label=f"huecos — {label_suffix}")
     for h in holes:
         lat, lon = utm_to_latlon(*h["centroid_xy"])
         rows.append({
             "nivel": niv,
+            "sector": sector_sel,
             "lat": lat, "lon": lon,
             "birth (m)": round(h["birth"], 0),
             "death (m)": round(h["death"], 0),
@@ -57,8 +86,9 @@ for niv in seleccion:
 
 if show_schools:
     import folium
-    layer = folium.FeatureGroup(name="escuelas (muestra)")
-    for _, row in df.sample(min(800, len(df)), random_state=0).iterrows():
+    df_pts = df if sector_sel == "ambos" else df[df["sector"] == sector_sel]
+    layer = folium.FeatureGroup(name=f"escuelas (muestra · {sector_sel})")
+    for _, row in df_pts.sample(min(800, len(df_pts)), random_state=0).iterrows():
         folium.CircleMarker(
             [row["latitud"], row["longitud"]], radius=2,
             color=NIVEL_COLOR.get(row["nivel"], "gray"),

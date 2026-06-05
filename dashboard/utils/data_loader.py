@@ -12,7 +12,7 @@ PARQUET = ROOT / "data" / "processed" / "escuelas_cdmx.parquet"
 TDA_DIR = ROOT / "data" / "processed" / "tda_results"
 
 NIVELES = ["preescolar", "primaria", "secundaria", "media_superior", "media_tecnica"]
-SECTORES = ["publico", "privado"]
+SECTORES = ["público", "privado"]
 NIVEL_COLOR = {
     "preescolar": "#2ca02c",
     "primaria": "#1f77b4",
