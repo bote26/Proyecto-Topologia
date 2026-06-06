@@ -1,4 +1,4 @@
-"""Visualización del complejo Vietoris-Rips a medida que crece ε."""
+"""Visualización del complejo Vietoris-Rips sobre el mapa real de CDMX."""
 from __future__ import annotations
 
 import sys
@@ -6,12 +6,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
-import plotly.graph_objects as go
 import streamlit as st
 from scipy.spatial import cKDTree
+from streamlit_folium import st_folium
+import folium
 
 from utils.data_loader import NIVEL_COLOR, NIVELES, SECTORES, load_escuelas
 from utils.tda import landmark_sample
+from utils.plotting import base_map, utm_to_latlon
 
 st.set_page_config(page_title="Complejos Simpliciales", page_icon="🔵", layout="wide")
 st.title("🔵 Complejos Simpliciales — animación de ε")
@@ -60,66 +62,88 @@ if len(Xs) <= 200 and eps > 0:
 
 color = NIVEL_COLOR.get(niv, "#444")
 
-fig = go.Figure()
+# Convertir todos los puntos UTM → lat/lon
+latlon = np.array([utm_to_latlon(x, y) for x, y in Xs])  # shape (n, 2)
 
-# 1) Discos (Čech)
-if show_disks and eps > 0:
-    theta = np.linspace(0, 2 * np.pi, 30)
-    cx = np.cos(theta) * (eps / 2)
-    cy = np.sin(theta) * (eps / 2)
-    for x, y in Xs:
-        fig.add_trace(go.Scatter(
-            x=cx + x, y=cy + y, fill="toself", mode="lines",
-            line=dict(color=color, width=0), opacity=0.10,
-            hoverinfo="skip", showlegend=False,
-        ))
+# ── Construir el mapa Folium ──────────────────────────────────────────────────
+m = base_map()
 
-# 2) Triángulos
-for i, j, k in triangles:
-    fig.add_trace(go.Scatter(
-        x=[Xs[i, 0], Xs[j, 0], Xs[k, 0], Xs[i, 0]],
-        y=[Xs[i, 1], Xs[j, 1], Xs[k, 1], Xs[i, 1]],
-        fill="toself", mode="lines",
-        line=dict(color=color, width=0), opacity=0.25,
-        hoverinfo="skip", showlegend=False,
-    ))
+# Capa de triángulos (2-símplex)
+if triangles:
+    tri_layer = folium.FeatureGroup(name="Triángulos (2-símplex)", show=True)
+    for i, j, k in triangles:
+        folium.Polygon(
+            locations=[latlon[i], latlon[j], latlon[k]],
+            color=color,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.20,
+            weight=0,
+        ).add_to(tri_layer)
+    tri_layer.add_to(m)
 
-# 3) Aristas
+# Capa de aristas (1-símplex)
 if edges:
-    ex, ey = [], []
+    edge_layer = folium.FeatureGroup(name="Aristas (1-símplex)", show=True)
     for i, j in edges:
-        ex += [Xs[i, 0], Xs[j, 0], None]
-        ey += [Xs[i, 1], Xs[j, 1], None]
-    fig.add_trace(go.Scatter(
-        x=ex, y=ey, mode="lines",
-        line=dict(color=color, width=1.2), opacity=0.6,
-        hoverinfo="skip", showlegend=False,
-    ))
+        folium.PolyLine(
+            locations=[latlon[i], latlon[j]],
+            color=color,
+            weight=1.5,
+            opacity=0.6,
+        ).add_to(edge_layer)
+    edge_layer.add_to(m)
 
-# 4) Vértices
-fig.add_trace(go.Scatter(
-    x=Xs[:, 0], y=Xs[:, 1], mode="markers",
-    marker=dict(color=color, size=5), name="escuelas",
-    hovertemplate="x=%{x:.0f}<br>y=%{y:.0f}<extra></extra>",
-))
+# Capa de discos Čech (círculos de radio ε/2 en metros)
+if show_disks and eps > 0:
+    disk_layer = folium.FeatureGroup(name="Discos Čech (radio ε/2)", show=True)
+    for lat, lon in latlon:
+        folium.Circle(
+            location=[lat, lon],
+            radius=eps / 2,          # en metros
+            color=color,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.08,
+            weight=0,
+        ).add_to(disk_layer)
+    disk_layer.add_to(m)
 
-fig.update_layout(
-    title=f"Vietoris-Rips a ε = {eps} m  ·  |V|={len(Xs)}  |E|={len(edges)}  |T|={len(triangles)}",
-    xaxis=dict(scaleanchor="y", title="x UTM (m)"),
-    yaxis=dict(title="y UTM (m)"),
-    height=700, margin=dict(l=20, r=20, t=50, b=20),
-    plot_bgcolor="white",
+# Capa de vértices (escuelas)
+vert_layer = folium.FeatureGroup(name="Escuelas (vértices)", show=True)
+for lat, lon in latlon:
+    folium.CircleMarker(
+        location=[lat, lon],
+        radius=4,
+        color=color,
+        fill=True,
+        fill_color=color,
+        fill_opacity=0.9,
+        weight=1,
+    ).add_to(vert_layer)
+vert_layer.add_to(m)
+
+folium.LayerControl(collapsed=False).add_to(m)
+
+# ── Renderizar ────────────────────────────────────────────────────────────────
+st.markdown(
+    f"**Vietoris-Rips** · ε = {eps} m &nbsp;|&nbsp; "
+    f"|V| = {len(Xs)} &nbsp;|&nbsp; "
+    f"|E| = {len(edges)} &nbsp;|&nbsp; "
+    f"|T| = {len(triangles)}"
 )
-st.plotly_chart(fig, use_container_width=True)
+st_folium(m, height=620, use_container_width=True, returned_objects=[])
 
 with st.expander("¿Cómo se lee esto?"):
     st.markdown("""
-- Cada punto es una escuela (en coordenadas UTM, metros).
-- A radio ε aparecen aristas entre escuelas cuyas distancias son ≤ ε.
-- Cuando 3 escuelas forman un triángulo cerrado, aparece la cara
-  (2-símplex sombreado).
-- Los discos de radio ε/2 (opcional) muestran la intuición del complejo
-  de Čech: dos discos se intersectan ⇔ hay una arista en el complejo
-  de Čech (que para puntos en el plano es muy parecido al Vietoris-Rips).
+- Cada punto es una escuela ubicada en su posición real dentro de CDMX.
+- A radio ε aparecen **aristas** entre escuelas cuya distancia es ≤ ε.
+- Cuando 3 escuelas forman un triángulo cerrado, aparece la **cara sombreada**
+  (2-símplex).
+- Los **discos de radio ε/2** (opcional) muestran la intuición del complejo
+  de Čech: dos discos se intersectan ⇔ hay una arista (muy parecido al
+  Vietoris-Rips en el plano).
 - Mueve el slider para ver cómo nacen y se cierran los **huecos**.
+- Usa el control de capas (esquina superior derecha del mapa) para
+  mostrar u ocultar triángulos, aristas y discos por separado.
 """)
