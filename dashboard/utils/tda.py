@@ -51,8 +51,44 @@ def betti_curves(dgms: list[np.ndarray], eps_grid: np.ndarray) -> np.ndarray:
     return out
 
 
+def _max_empty_point(X_all: np.ndarray, verts: np.ndarray) -> np.ndarray:
+    """Punto interior del hueco más alejado de cualquier escuela.
+
+    Construye una grilla densa dentro del casco convexo de los vértices del cociclo,
+    filtra los candidatos que caen fuera del polígono y devuelve el que maximiza
+    la distancia mínima a todos los puntos en X_all.
+    """
+    from scipy.spatial import cKDTree, ConvexHull
+    from shapely.geometry import MultiPoint, Point
+
+    pts = X_all[verts]
+    lo, hi = pts.min(axis=0), pts.max(axis=0)
+
+    # Grilla de ~60×60 dentro del bbox
+    xs = np.linspace(lo[0], hi[0], 60)
+    ys = np.linspace(lo[1], hi[1], 60)
+    grid = np.array(np.meshgrid(xs, ys)).reshape(2, -1).T  # (3600, 2)
+
+    # Casco convexo de los vértices del cociclo como polígono de filtro
+    try:
+        hull_poly = MultiPoint(pts).convex_hull
+        mask = np.array([hull_poly.contains(Point(p)) for p in grid])
+        candidates = grid[mask]
+    except Exception:
+        candidates = grid
+
+    # Si el polígono es demasiado pequeño y no contiene ningún punto de la grilla,
+    # caer de vuelta a la grilla completa
+    if len(candidates) == 0:
+        candidates = grid
+
+    tree = cKDTree(X_all)
+    dists, _ = tree.query(candidates, k=1)
+    return candidates[np.argmax(dists)]
+
+
 def top_h1_with_cocycles(r: dict, k: int = 5) -> list[dict]:
-    """Devuelve los k features H1 más persistentes con sus centroides geométricos."""
+    """Devuelve los k features H1 más persistentes con centroides en el interior del hueco."""
     dgm1 = r["dgms"][1]
     cocycles = r["cocycles"][1] if len(r.get("cocycles", [])) > 1 else []
     X = r["X"]
@@ -67,7 +103,8 @@ def top_h1_with_cocycles(r: dict, k: int = 5) -> list[dict]:
         verts = np.unique(coc[:, :2].ravel()).astype(int) if len(coc) else np.array([], dtype=int)
         if len(verts) == 0:
             continue
-        centroid = X[verts].mean(axis=0)
+        # Centroide = punto interior más alejado de cualquier escuela (opción A)
+        centroid = _max_empty_point(X, verts)
         out.append({
             "birth": float(dgm1[idx, 0]),
             "death": float(deaths[idx]),
