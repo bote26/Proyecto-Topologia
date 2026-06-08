@@ -12,7 +12,7 @@ import folium
 from scipy.spatial import cKDTree
 from streamlit_folium import st_folium
 
-from utils.data_loader import NIVEL_COLOR, NIVELES, SECTORES, load_escuelas, load_tda
+from utils.data_loader import NIVEL_COLOR, NIVELES, SECTORES, load_escuelas
 from utils.tda import landmark_sample, top_h1_with_cocycles, compute_for_points
 from utils.plotting import base_map, utm_to_latlon, add_holes_layer
 
@@ -22,13 +22,24 @@ st.set_page_config(
     layout="wide",
 )
 
+# ── Caché: calcula TDA solo cuando cambia el subconjunto de puntos ─────────────
+@st.cache_data(show_spinner=False)
+def _compute_holes(pts_bytes: bytes, n_pts: int, thresh: int, max_n: int, top_k: int):
+    """Calcula huecos H₁ a partir de un array de puntos serializado."""
+    pts = np.frombuffer(pts_bytes, dtype=np.float64).reshape(n_pts, 2)
+    r = compute_for_points(pts, thresh=thresh, max_n=max_n)
+    if r is None:
+        return []
+    return top_h1_with_cocycles(r, k=top_k)
+
 # ── Cabecera ──────────────────────────────────────────────────────────────────
 st.title("🧩 Complejo Simplicial + Huecos de Cobertura")
 st.markdown(
     "Visualiza simultáneamente la **estructura del complejo Vietoris-Rips** "
     "(vértices, aristas y triángulos) y los **huecos H₁ más persistentes** "
     "(círculos de cobertura) sobre el mismo mapa de CDMX. "
-    "Ajusta ε para ver cómo nacen y mueren los huecos en tiempo real."
+    "Los huecos se calculan **siempre con los datos filtrados** para que "
+    "el complejo y los huecos sean consistentes entre sí."
 )
 
 df = load_escuelas()
@@ -37,15 +48,15 @@ df = load_escuelas()
 with st.sidebar:
     st.header("⚙️ Parámetros")
 
-    st.subheader("Datos")
+    st.subheader("Filtros de datos")
     niv = st.selectbox("Nivel educativo", ["todas", *NIVELES], index=2)
     sec = st.selectbox("Sector", ["ambos", *SECTORES])
 
     st.subheader("Complejo Vietoris-Rips")
     max_pts = st.slider(
-        "Puntos máx (landmarks)",
+        "Puntos máx (landmarks para el complejo)",
         50, 600, 200, 25,
-        help="Submuestreo para el complejo. Más puntos = mapa más lento.",
+        help="Submuestreo para dibujar el complejo. Más puntos = mapa más lento.",
     )
     eps = st.slider("ε — radio del complejo (m)", 0, 5000, 1200, 50)
     show_triangles = st.checkbox("Mostrar 2-símplex (triángulos)", True)
@@ -55,26 +66,33 @@ with st.sidebar:
 
     st.subheader("Huecos H₁")
     top_k = st.slider("Top-K huecos a mostrar", 1, 10, 5)
-    modo_huecos = st.radio(
-        "Origen de los huecos",
-        ["Pre-computado", "Recalcular (mismo filtro)"],
-        help="Pre-computado es instantáneo; Recalcular usa exactamente "
-             "los mismos puntos del complejo.",
+    thresh_h = st.slider(
+        "Umbral ε para persistencia (m)",
+        500, 10000, 5000, 100,
+        help="Radio máximo hasta el que se construye el complejo para la "
+             "homología. No afecta el dibujo del complejo arriba.",
     )
-    if modo_huecos == "Recalcular (mismo filtro)":
-        thresh_h = st.slider("Umbral ε para persistencia (m)", 500, 10000, 5000, 100)
-        max_n_h = st.slider("Submuestreo TDA (landmarks)", 200, 2000, 600, 100)
+    max_n_h = st.slider(
+        "Submuestreo TDA (landmarks para huecos)",
+        200, 2000, 600, 100,
+        help="Cuántos puntos se usan para calcular la homología persistente. "
+             "Más puntos = más preciso pero más lento.",
+    )
 
-# ── Filtrado de datos ─────────────────────────────────────────────────────────
+# ── Filtrado de datos (fuente de verdad única) ────────────────────────────────
 sub = df.copy()
 if niv != "todas":
     sub = sub[sub["nivel"] == niv]
 if sec != "ambos":
     sub = sub[sub["sector"] == sec]
 
-st.caption(f"**{len(sub):,}** escuelas con los filtros actuales.")
+n_sub = len(sub)
+st.caption(
+    f"**{n_sub:,}** escuelas con los filtros actuales "
+    f"(nivel: *{niv}*, sector: *{sec}*)."
+)
 
-if len(sub) < 3:
+if n_sub < 3:
     st.warning("Necesito al menos 3 escuelas para construir el complejo.")
     st.stop()
 
@@ -99,20 +117,12 @@ if eps > 0 and len(Xs) > 1:
 
 latlon = np.array([utm_to_latlon(x, y) for x, y in Xs])
 
-# ── Huecos H₁ ────────────────────────────────────────────────────────────────
-holes = []
-if modo_huecos == "Pre-computado":
-    r = load_tda(niv)
-    if r is not None:
-        holes = top_h1_with_cocycles(r, k=top_k)
-    else:
-        st.sidebar.warning("No hay datos pre-computados para este nivel; "
-                           "cambia a 'Recalcular'.")
-else:
-    with st.spinner("Calculando homología persistente…"):
-        r = compute_for_points(X_all, thresh=thresh_h, max_n=max_n_h)
-    if r is not None:
-        holes = top_h1_with_cocycles(r, k=top_k)
+# ── Huecos H₁ — siempre calculados con los datos filtrados ───────────────────
+# La clave de caché incluye nivel + sector + parámetros TDA, por lo que solo
+# recalcula cuando algo realmente cambia.
+with st.spinner(f"Calculando huecos sobre {n_sub:,} escuelas filtradas…"):
+    pts_bytes = X_all.astype(np.float64).tobytes()
+    holes = _compute_holes(pts_bytes, n_sub, thresh_h, max_n_h, top_k)
 
 # ── Mapa Folium ───────────────────────────────────────────────────────────────
 m = base_map()
