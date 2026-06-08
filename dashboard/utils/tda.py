@@ -105,6 +105,10 @@ def top_h1_with_cocycles(r: dict, k: int = 5) -> list[dict]:
             continue
         # Centroide = punto interior más alejado de cualquier escuela (opción A)
         centroid = _max_empty_point(X, verts)
+        # Radio = distancia desde el centroide a la escuela más cercana
+        from scipy.spatial import cKDTree
+        tree = cKDTree(X)
+        geom_radius = float(tree.query(centroid, k=1)[0])
         out.append({
             "birth": float(dgm1[idx, 0]),
             "death": float(deaths[idx]),
@@ -112,5 +116,6 @@ def top_h1_with_cocycles(r: dict, k: int = 5) -> list[dict]:
             "centroid_xy": centroid,
             "vert_xy": X[verts],
             "n_verts": int(len(verts)),
+            "geom_radius": geom_radius,
         })
     return out
