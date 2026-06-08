@@ -114,7 +114,7 @@ def add_holes_layer(m: folium.Map, holes: list[dict], color: str = "red",
     for h in holes:
         lat, lon = utm_to_latlon(*h["centroid_xy"])
         folium.Circle(
-            [lat, lon], radius=max(h["pers"] / 2, 100),
+            [lat, lon], radius=max(h.get("geom_radius", h["pers"] / 2), 100),
             color=color, fill=True, fill_opacity=0.15,
             popup=(f"<b>{label}</b><br>birth: {h['birth']:.0f} m"
                    f"<br>death: {h['death']:.0f} m"

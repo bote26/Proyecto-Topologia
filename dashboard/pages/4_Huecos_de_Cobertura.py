@@ -40,7 +40,7 @@ with st.sidebar:
              "Filtrar por sector recalcula la persistencia sobre el subconjunto.",
     )
     if sector_sel != "ambos":
-        thresh_recalc = st.slider("Umbral ε para recálculo (m)", 500, 5000, 3000, 100)
+        thresh_recalc = st.slider("Umbral ε para recálculo (m)", 500, 10000, 10000, 100)
         st.caption("Cálculo sin submuestreo: se usan todas las escuelas del subconjunto.")
     top_k = st.slider("Top-K huecos por nivel", 1, 10, 5)
     show_schools = st.checkbox("Mostrar escuelas como puntos", False)
