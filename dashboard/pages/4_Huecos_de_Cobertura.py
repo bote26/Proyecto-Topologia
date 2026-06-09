@@ -46,7 +46,7 @@ with st.sidebar:
         "Sector", ["ambos", *SECTORES],
         index=0, horizontal=True,
     )
-    thresh_h = st.slider("Umbral ε para persistencia (m)", 500, 10000, 5000, 100)
+    thresh_h = st.slider("Umbral ε para persistencia (m)", 500, 10000, 10000, 100)
     max_n_h = st.slider(
         "Submuestreo TDA (landmarks)", 200, 2000, 800, 100,
         help="Más landmarks = más preciso pero más lento.",
