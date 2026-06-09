@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import streamlit as st
 
-from utils.data_loader import NIVELES, SECTORES, load_escuelas, load_tda
+from utils.data_loader import NIVELES, SECTORES, load_escuelas
 from utils.plotting import barcode, betti_curve_fig, persistence_diagram
 from utils.tda import betti_curves, compute_for_points
 
@@ -17,35 +17,37 @@ st.title("📈 Homología persistente")
 
 df = load_escuelas()
 
+# ── Caché: recalcula solo cuando cambian los puntos o parámetros TDA ──────────
+@st.cache_data(show_spinner=False)
+def _compute(pts_bytes: bytes, n_pts: int, thresh: int, max_n: int):
+    pts = np.frombuffer(pts_bytes, dtype=np.float64).reshape(n_pts, 2)
+    return compute_for_points(pts, thresh=thresh, max_n=max_n)
+
 with st.sidebar:
-    st.header("Selección")
-    modo = st.radio(
-        "Modo",
-        ["Pre-computado por nivel", "Recalcular con filtros"],
-        help="Pre-computado es instantáneo. Recalcular te deja combinar filtros.",
-    )
-    if modo == "Pre-computado por nivel":
-        niv = st.selectbox("Nivel", ["preescolar", "primaria", "secundaria",
-                                     "media_superior", "media_tecnica", "todas"])
-        r = load_tda(niv)
-        label = niv
-    else:
-        nivs = st.multiselect("Niveles", NIVELES, default=["primaria"])
-        secs = st.multiselect("Sectores", SECTORES, default=SECTORES)
-        thresh = st.slider("Umbral ε (m)", 500, 5000, 3000, 100)
-        max_n = st.slider("Submuestreo (landmarks)", 200, 2000, 800, 100)
-        sub = df[df["nivel"].isin(nivs) & df["sector"].isin(secs)]
-        st.caption(f"{len(sub):,} escuelas")
-        if len(sub) < 3:
-            st.error("Necesito al menos 3 escuelas.")
-            st.stop()
-        with st.spinner("Calculando Vietoris-Rips..."):
-            r = compute_for_points(sub[["x_utm", "y_utm"]].values,
-                                   thresh=thresh, max_n=max_n)
-        label = "+".join(nivs) + " · " + "+".join(secs)
+    st.header("Filtros")
+    nivs = st.multiselect("Niveles", NIVELES, default=["primaria"])
+    secs = st.multiselect("Sectores", SECTORES, default=SECTORES)
+    thresh = st.slider("Umbral ε (m)", 500, 5000, 3000, 100)
+    max_n = st.slider("Submuestreo (landmarks)", 200, 2000, 800, 100)
+
+    sub = df[df["nivel"].isin(nivs) & df["sector"].isin(secs)]
+    st.caption(f"**{len(sub):,}** escuelas seleccionadas")
+
+if len(nivs) == 0 or len(secs) == 0:
+    st.info("Selecciona al menos un nivel y un sector.")
+    st.stop()
+if len(sub) < 3:
+    st.error("Necesito al menos 3 escuelas con los filtros actuales.")
+    st.stop()
+
+label = "+".join(nivs) + " · " + "+".join(secs)
+
+with st.spinner("Calculando Vietoris-Rips…"):
+    pts = sub[["x_utm", "y_utm"]].values.astype(np.float64)
+    r = _compute(pts.tobytes(), len(pts), thresh, max_n)
 
 if r is None:
-    st.error("No se encontraron resultados pre-computados.")
+    st.error("El cálculo no produjo resultados. Intenta aumentar el umbral ε o el submuestreo.")
     st.stop()
 
 dgms = r["dgms"]
