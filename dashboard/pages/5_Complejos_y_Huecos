@@ -18,7 +18,6 @@ from utils.plotting import base_map, utm_to_latlon, add_holes_layer
 
 st.set_page_config(
     page_title="Complejo + Huecos",
-    page_icon="🧩",
     layout="wide",
 )
 
@@ -46,7 +45,7 @@ df = load_escuelas()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("⚙️ Parámetros")
+    st.header(" Parámetros")
 
     st.subheader("Filtros de datos")
     niv = st.selectbox("Nivel educativo", ["todas", *NIVELES], index=2)

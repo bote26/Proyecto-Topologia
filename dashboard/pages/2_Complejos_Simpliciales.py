@@ -15,8 +15,8 @@ from utils.data_loader import NIVEL_COLOR, NIVELES, SECTORES, load_escuelas
 from utils.tda import landmark_sample
 from utils.plotting import base_map, utm_to_latlon
 
-st.set_page_config(page_title="Complejos Simpliciales", page_icon="🔵", layout="wide")
-st.title("🔵 Complejos Simpliciales — animación de ε")
+st.set_page_config(page_title="Complejos Simpliciales", page_icon="", layout="wide")
+st.title(" Complejos Simpliciales — animación de ε")
 
 df = load_escuelas()
 

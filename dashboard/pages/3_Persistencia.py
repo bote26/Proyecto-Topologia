@@ -12,8 +12,8 @@ from utils.data_loader import NIVELES, SECTORES, load_escuelas
 from utils.plotting import barcode, betti_curve_fig, persistence_diagram
 from utils.tda import betti_curves, compute_for_points
 
-st.set_page_config(page_title="Persistencia", page_icon="📈", layout="wide")
-st.title("📈 Homología persistente")
+st.set_page_config(page_title="Persistencia", page_icon="", layout="wide")
+st.title(" Homología persistente")
 
 df = load_escuelas()
 

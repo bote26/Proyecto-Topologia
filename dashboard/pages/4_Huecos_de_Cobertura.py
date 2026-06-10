@@ -14,7 +14,7 @@ from utils.data_loader import NIVEL_COLOR, NIVELES, SECTORES, load_escuelas
 from utils.plotting import add_holes_layer, base_map, utm_to_latlon
 from utils.tda import compute_for_points, top_h1_with_cocycles
 
-st.set_page_config(page_title="Huecos de Cobertura", page_icon="🗺️", layout="wide")
+st.set_page_config(page_title="Huecos de Cobertura", page_icon="", layout="wide")
 st.title("🗺️ Huecos de cobertura escolar")
 
 st.markdown(

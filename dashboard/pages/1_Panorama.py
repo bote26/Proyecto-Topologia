@@ -12,8 +12,8 @@ from streamlit_folium import st_folium
 from utils.data_loader import NIVEL_COLOR, NIVELES, SECTORES, load_escuelas
 from utils.plotting import add_school_layer, base_map
 
-st.set_page_config(page_title="Panorama", page_icon="📊", layout="wide")
-st.title("📊 Panorama")
+st.set_page_config(page_title="Panorama", page_icon="", layout="wide")
+st.title(" Panorama")
 
 df = load_escuelas()
 
